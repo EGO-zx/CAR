@@ -1,0 +1,16 @@
+{
+  "time": "2026-11-10T13:49:32.225424+08:00",
+  "before": {
+    "user/src/ring_process.c": "bd873dab42c9507b1e3e8c10c21e805c440ceb97ea3345a68ce1fefcbd94cd6c",
+    "tests/test_cross_path.py": "4ef5aacf458256dcd11039a513a8b17789e9d06a98e2853c3cfcee8c1830ccc2",
+    "tests/test_ring_integration.py": "87541a083cb9e61438e1ee8b2f2b89345c9ba237f6d11ad385536ba8487a313d",
+    "CHANGELOG.md": "4888621557cc132a0600bd09cc85673d9ddf70070b53ed8d48b2c37a607151a0"
+  },
+  "after": {
+    "user/src/ring_process.c": "ab259a55d6e82ff82a36de0658fa60b92705ace6d139b22ffbf0e189eed61eb5",
+    "tests/test_cross_path.py": "b472683c44689c7965b02f3353b86b36a10f053fa390aeafca2acc6815dc6f05",
+    "tests/test_ring_integration.py": "c9b3c65e6217f0c9211894abaad7a60c3d8ba1792edefd7e47a2976d159f62c5",
+    "CHANGELOG.md": "6f0e45bbaf71877bf1769d8c6ddddd98e822a521a6228da7c47b2d2e5041ee44"
+  },
+  "validation": "Final Keil 0 errors, 0 warnings; ring integration, S1 order, slanted exit, S4 bridge, cross path PASS; not flashed"
+}

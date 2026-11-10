@@ -1,0 +1,20 @@
+{
+  "time": "2026-11-10T12:07:21.077224+08:00",
+  "before": {
+    "user/src/ring_s1.c": "f979bc491db58b540209ae68b094aa9146ef0ecf25c7ba876107cbd7dd3948f6",
+    "user/inc/ring_s1.h": "5bfbc1076fc66750abde05645dca078dadf6e8e62d22f76b083bc0d4268027c0",
+    "tests/test_ring_integration.py": "6cab3fcf14698b166abd288654201c8a48821a6ec510cc843cc1c7a8b5cd0123",
+    "CHANGELOG.md": "5f744a84b1d00ff26a28708ba4857f58dd1a1ef9de63678f4c32ab71c557e0b8"
+  },
+  "added": [
+    "tests/test_ring_s1_order.py"
+  ],
+  "after": {
+    "user/src/ring_s1.c": "b79042f16c6cf0334fc287532c7eb6ddfbb5bcbe24235d825b052388c1950499",
+    "user/inc/ring_s1.h": "6087ead0a06d1ff21b618a6b260af881e13b24589381ceeff8a6eea397617ef4",
+    "tests/test_ring_integration.py": "939e4b3bb10106590727cd8698b511d90da3142c6f5249c5c040a03520877086",
+    "CHANGELOG.md": "b667db59fc70d2ff6a21063dce49ba2d4d023a406ebfcb65527bc0cd04629953",
+    "tests/test_ring_s1_order.py": "653133249e7b3be714fd808eaed104898455836fa712fbf14a0b5ab057dd2ddc"
+  },
+  "validation": "Keil 0 errors/0 warnings; test_ring_s1_order, test_ring_integration, test_ring_slanted_exit, test_ring_s4_bridge PASS; not flashed"
+}

@@ -1,0 +1,27 @@
+{
+  "time": "2026-11-08T12:34:15.578008+08:00",
+  "before": {
+    "user/src/ring_s4.c": "52f67ae513fb9c59afba179fa303278ff34dc68d9bbd8908fa6d08c1acd33360",
+    "user/inc/ring_s4.h": "e448b391b2fa49d3141e76e04fee80de9d8c9c57d970488e0fcc9bf81af4661b",
+    "user/src/ring_process.c": "7077dc36251b0d7c9c157f11d208d3a989aa998071c47e454d8b8ea55c297153",
+    "user/inc/ring_process.h": "4312b1aba89ca1f579ff062d3c07d62be2d0887d71e83bca1aa32ff6eaa7a504",
+    "user/src/main.c": "c0fec8533038eaba17127d820918991572b06e706473942ab35f52b9c237310a",
+    "tests/test_ring_integration.py": "8d7597bc0529eeb35c267f2ebb423a70ea5635f5039b0c7459c4bb4fdb875e5c",
+    "tests/test_ring_slanted_exit.py": "0679d0346b30d80224791e333cc8c617c49546a41bd94b39921f568c91d024a9",
+    "CHANGELOG.md": "504c471a28696c87b8f46dbbcd89804be8f6095d694580cdfd0d68dee6c0448f"
+  },
+  "new": [
+    "tests/test_ring_s4_bridge.py"
+  ],
+  "after": {
+    "user/src/ring_s4.c": "8c3af28be4b2b32aba2e2ca7c08f4e49f83f450e28461169f3ae7dee84901ef3",
+    "user/inc/ring_s4.h": "bc987e5012f1524c978fcfb8ca250a20a0ef9466b8fb5c57064b435e6f6b380e",
+    "user/src/ring_process.c": "bd873dab42c9507b1e3e8c10c21e805c440ceb97ea3345a68ce1fefcbd94cd6c",
+    "user/inc/ring_process.h": "4132eab4a2eab6c9a8f6e938f6228bad03ffa6ddae5a2c6ac5bdbf5d63e6180d",
+    "user/src/main.c": "ed092cff508f0146fd9cfd69b98a46aa2ae62a26fc5250f7a2c5208c6de2052c",
+    "tests/test_ring_integration.py": "6cab3fcf14698b166abd288654201c8a48821a6ec510cc843cc1c7a8b5cd0123",
+    "tests/test_ring_slanted_exit.py": "4a7e9ca85ef29db85690124559d671fef6381c89dd2e3c32032781e1c1816db8",
+    "CHANGELOG.md": "0a0f6d84d06ca35522d0acea59c5ac2dba80b0f654dd072cc29428dba1028151",
+    "tests/test_ring_s4_bridge.py": "ddcc931f698a165d24e7a51293228c65c31b0791023b8e7b744b0ba2a902f254"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "time": "2026-11-08T13:08:45.582582+08:00",
+  "before": {
+    "user/src/ring_s1.c": "f979bc491db58b540209ae68b094aa9146ef0ecf25c7ba876107cbd7dd3948f6",
+    "user/inc/ring_s1.h": "5bfbc1076fc66750abde05645dca078dadf6e8e62d22f76b083bc0d4268027c0",
+    "user/src/ring_process.c": "bd873dab42c9507b1e3e8c10c21e805c440ceb97ea3345a68ce1fefcbd94cd6c",
+    "CHANGELOG.md": "0a0f6d84d06ca35522d0acea59c5ac2dba80b0f654dd072cc29428dba1028151",
+    "tests/test_cross_path.py": "4ef5aacf458256dcd11039a513a8b17789e9d06a98e2853c3cfcee8c1830ccc2"
+  },
+  "new": [
+    "tests/test_ring_s1_straight.py"
+  ],
+  "after": {
+    "user/src/ring_s1.c": "ab8ab54a7976b6ea5b746a1f7fb4fb8a3542960c46973708b1a1609de9752111",
+    "user/inc/ring_s1.h": "0548cce668714de6b578ff692705933fe38b9e68efe28c467adc13c217686be7",
+    "user/src/ring_process.c": "50f35d98faf1942315adb5c7baeb2fdabb55c834518da1a3fd4797df8ed7378f",
+    "CHANGELOG.md": "2853f899578853e6bbf56b12478ebeb4519575f2ca2e9275d0394a1feb2b84b1",
+    "tests/test_cross_path.py": "9903692cf63b931b25b627ce6715298352c2d78e737968e3740c6e2c8fd5fd41",
+    "tests/test_ring_s1_straight.py": "69f2df42fcaeedc7d3361829d1dfb75d8c0226caba394324a3d8c24884c728e4"
+  }
+}

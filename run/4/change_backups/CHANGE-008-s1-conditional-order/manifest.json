@@ -1,0 +1,17 @@
+{
+  "time": "2026-11-10T12:15:03.102123+08:00",
+  "before": {
+    "user/src/ring_s1.c": "b79042f16c6cf0334fc287532c7eb6ddfbb5bcbe24235d825b052388c1950499",
+    "user/inc/ring_s1.h": "6087ead0a06d1ff21b618a6b260af881e13b24589381ceeff8a6eea397617ef4",
+    "tests/test_ring_s1_order.py": "653133249e7b3be714fd808eaed104898455836fa712fbf14a0b5ab057dd2ddc",
+    "tests/test_ring_integration.py": "939e4b3bb10106590727cd8698b511d90da3142c6f5249c5c040a03520877086",
+    "CHANGELOG.md": "b667db59fc70d2ff6a21063dce49ba2d4d023a406ebfcb65527bc0cd04629953"
+  },
+  "after": {
+    "user/src/ring_s1.c": "fd9cc0f804f84bee0f89bfdf989eb35e234227a62da855be447115cfe116ff9b",
+    "user/inc/ring_s1.h": "b1cdd56a0fb12b729c4346c4b7747c5804b394641581a40eb77a7fed0179d08e",
+    "tests/test_ring_s1_order.py": "5524697d65da4072d24a548f1c1614e7b20dc35f550205a97e15ca90047fdcf5",
+    "tests/test_ring_integration.py": "87541a083cb9e61438e1ee8b2f2b89345c9ba237f6d11ad385536ba8487a313d",
+    "CHANGELOG.md": "4888621557cc132a0600bd09cc85673d9ddf70070b53ed8d48b2c37a607151a0"
+  }
+}

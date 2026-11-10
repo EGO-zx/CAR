@@ -1,0 +1,14 @@
+{
+  "time": "2026-11-08T12:26:19.440593+08:00",
+  "reverts": "CHANGE-001",
+  "before": {
+    "user/src/ring_process.c": "24f285ce98f015e3430fbd1bfda31e3fa082f5267a3267d7bf3af9806d8f9b93",
+    "tests/test_ring_integration.py": "803db73f29e1499fbd2a9feec6ad8e5b1b43cc32fe31152de352d5b800b85cc0",
+    "CHANGELOG.md": "7c1151e9528a65c5ba650398b13255e99bb1431bdde420a24d01011b80b0b165"
+  },
+  "after": {
+    "user/src/ring_process.c": "7077dc36251b0d7c9c157f11d208d3a989aa998071c47e454d8b8ea55c297153",
+    "tests/test_ring_integration.py": "8d7597bc0529eeb35c267f2ebb423a70ea5635f5039b0c7459c4bb4fdb875e5c",
+    "CHANGELOG.md": "504c471a28696c87b8f46dbbcd89804be8f6095d694580cdfd0d68dee6c0448f"
+  }
+}

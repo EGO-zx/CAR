@@ -1,0 +1,7 @@
+*** Using Compiler 'V6.24', folder: 'D:\keilmdk\Core\ARM\ARMCLANG\Bin'
+Build target 'nor_sdram_zf_dtcm'
+compiling img_process.c...
+linking...
+Program Size: Code=58036 RO-data=8480 RW-data=224 ZI-data=137776  
+".\Objects\rt1064.axf" - 0 Error(s), 0 Warning(s).
+Build Time Elapsed:  00:00:04

@@ -81,9 +81,9 @@ uint8_t left_line[MT9V03X_H];
 uint8_t mid_line[MT9V03X_H];
 uint8_t right_line[MT9V03X_H];
 
-// 加权前瞻：以90行为中心，取80~100行；行号越小，看得越远。
+// 加权前瞻：以85行为中心，取75~95行；行号越小，看得越远。
 // 调前瞻只需修改中心行；半径控制参与平均的范围。
-#define STEER_LOOKAHEAD_ROW 90
+#define STEER_LOOKAHEAD_ROW 85
 #define STEER_WINDOW_RADIUS 10
 
 #if STEER_WINDOW_RADIUS < 0 || STEER_LOOKAHEAD_ROW - STEER_WINDOW_RADIUS < 0 || STEER_LOOKAHEAD_ROW + STEER_WINDOW_RADIUS >= MT9V03X_H
@@ -268,7 +268,7 @@ int main(void)
             if (get_weighted_mid_error(&mid_err))
             {
                 //舵机根据误差乘以系数打角
-                float tmp_duty = servo_motor_duty_middle - mid_err * 0.5 * SERVO_DIR;
+                float tmp_duty = servo_motor_duty_middle - mid_err * 0.6f * SERVO_DIR;
                 // 限幅
                 tmp_duty = MAX(tmp_duty,MIN(SERVO_MOTOR_L_MAX,SERVO_MOTOR_R_MAX));
                 tmp_duty = MIN(tmp_duty,MAX(SERVO_MOTOR_L_MAX,SERVO_MOTOR_R_MAX));

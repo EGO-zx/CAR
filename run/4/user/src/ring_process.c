@@ -20,32 +20,58 @@ static uint16_t fixed_width[256];
 static uint16_t width_sum[256];
 static uint8_t straight_samples;
 
-/* S1-only working widths: updated from the current middle/lower bridge.
- * Store twice the measured half-width so the existing right-edge helper
- * reproduces the integer midpoint exactly after a corner disappears. */
+/* State 1 calibration stores twice the half-width for ring_s1_apply. */
 static uint16_t s1_bridge_width[256];
+
+static int bridge_half_at(int y,int a,int b,const uint16_t *samples,int cols)
+{
+    int half=samples[a]/2;
+    if(a!=b)half+=((int)samples[b]/2-half)*(y-a)/(b-a);
+    if(half<S1_MIN_WIDTH/2)half=S1_MIN_WIDTH/2;
+    if(half>=cols)half=cols-1;
+    return half;
+}
 
 static void s1_bridge_apply(int rows,int cols,const s1_result_t *o,
     const uint8_t *right,uint8_t *mid)
 {
-    memset(cross_draw_flags,0,sizeof(cross_draw_flags));
-    ring_s1_apply(rows,cols,right,img_edge_valid,s1_bridge_width,mid,img_line_valid);
-    if(!o->middle.valid || !o->lower.valid || o->middle.y<0 ||
-       o->lower.y>=rows || o->middle.y>=o->lower.y ||
-       o->middle.x<0 || o->middle.x>=cols || o->lower.x<0 || o->lower.x>=cols)return;
-    for(int y=o->middle.y;y<=o->lower.y;++y){
-        int l=o->middle.x+(o->lower.x-o->middle.x)*(y-o->middle.y)/
-            (o->lower.y-o->middle.y);
-        int r=right[y];
-        img_line_valid[y]=0;
-        cross_draw_left[y]=(uint8_t)l;cross_draw_flags[y]=1;
-        if(!(img_edge_valid[y]&2) || r>=cols || r-l<S1_MIN_WIDTH)continue;
-        int center=(l+r)/2;
-        mid[y]=(uint8_t)center;img_line_valid[y]=4;
-        s1_bridge_width[y]=(uint16_t)(2*(r-center));
+    uint16_t samples[256]={0};
+    int first=-1,second=-1,previous=-1,last=-1;
+    if(o->middle.valid && o->lower.valid && o->middle.y>=0 &&
+       o->lower.y<rows && o->middle.y<o->lower.y &&
+       o->middle.x>=0 && o->middle.x<cols && o->lower.x>=0 && o->lower.x<cols){
+        for(int y=o->middle.y;y<=o->lower.y;++y){
+            int l=o->middle.x+(o->lower.x-o->middle.x)*(y-o->middle.y)/
+                (o->lower.y-o->middle.y);
+            int r=right[y];
+            cross_draw_left[y]=(uint8_t)l;
+            cross_draw_flags[y]=1;
+            if(!(img_edge_valid[y]&2) || r>=cols || r-l<S1_MIN_WIDTH)continue;
+            samples[y]=(uint16_t)(2*(r-(l+r)/2));
+            if(first<0)first=y;
+            else if(second<0)second=y;
+            previous=last;
+            last=y;
+        }
     }
+    if(first>=0){
+        /* Interpolate holes and extend the nearest measured slope at each end. */
+        int a=first,b=second<0?first:second;
+        for(int y=0;y<rows;++y){
+            while(y>b && b<last){
+                a=b;
+                do{++b;}while(!samples[b]);
+            }
+            if(y>last && previous>=0){a=previous;b=last;}
+            s1_bridge_width[y]=samples[y]?samples[y]:
+                (uint16_t)(2*bridge_half_at(y,a,b,samples,cols));
+        }
+    }
+    ring_s1_apply(rows,cols,right,img_edge_valid,s1_bridge_width,mid,img_line_valid);
+    /* A bridge row with rejected geometry must not steer from that row. */
+    for(int y=0;y<rows;++y)
+        if(cross_draw_flags[y] && !samples[y])img_line_valid[y]=0;
 }
-
 
 static void measure_straight(int rows,const uint8_t *left,const uint8_t *right)
 {
@@ -146,7 +172,7 @@ void track_special_process(const uint8_t *image,uint8_t rows,uint8_t cols,
             return;
         }
         if(straight_samples<4)straight_samples=0;
-        memcpy(s1_bridge_width,fixed_width,sizeof(s1_bridge_width));
+        memset(s1_bridge_width,0,sizeof(s1_bridge_width));
         memset(&img_cross,0,sizeof(img_cross));
         memset(cross_draw_flags,0,sizeof(cross_draw_flags));
     }else if(ring.state<=2){
@@ -188,18 +214,9 @@ void track_special_process(const uint8_t *image,uint8_t rows,uint8_t cols,
 
     switch(ring.state){
     case 1: s1_bridge_apply(rows,cols,&observation,right,mid);break;
-    case 2: ring_s2_apply(image,rows,cols,&island,width,mid,img_line_valid);break;
+    case 2:
     case 3:
-        for(int y=0;y<rows;++y){
-            if(img_line_valid[y]==2)continue; /* measured pair midpoint */
-            img_line_valid[y]=0;
-            if(!width[y])continue;
-            int center;
-            if(img_edge_valid[y]==1)center=left[y]+width[y]/2;
-            else if(img_edge_valid[y]==2)center=right[y]-width[y]/2;
-            else continue;
-            if(center>=0 && center<cols){mid[y]=(uint8_t)center;img_line_valid[y]=1;}
-        }
+        ring_s2_apply(image,rows,cols,&island,s1_bridge_width,mid,img_line_valid);
         break;
     case RING_STATE_4:
     case RING_STATE_5:

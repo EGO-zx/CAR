@@ -91,6 +91,8 @@ def check():
     assert run.state==2 and all(abs(result[1][y]-100)<=2 for y in range(80,101))
     assert all(run.draw[2][y]==3 for y in range(80,101))
     assert all(result[1][y]==(run.draw[0][y]+run.draw[1][y])//2 for y in range(80,101))
+    run(scene(0,0))
+    assert run.state==4 and run.mask&3==0, 'One missing frame must not exit'
     result=run(scene(0,0))
     assert run.state==0 and all(result[3][y]==2 for y in range(80,120))
     fresh=machine(); result=fresh(scene(40,140))
@@ -125,6 +127,7 @@ def check_corner_tracking(integrated=False):
         assert abs(run.corners[0]-(60+shift))<=3
         assert abs(run.corners[1]-(128+shift))<=3
     run(scene(0,0))
+    run(scene(0,0))
     assert run.state==0
     run(scene(25,45))
     assert run.state==1, 'New junction must not inherit old corner tracking'
@@ -143,6 +146,7 @@ def check_lower_departure():
             result=run(frame)
             assert run.state==2 and run.mask&12==0,(run.state,run.mask,run.corners)
             assert all(result[3][y]==3 and abs(result[1][y]-94)<=2 for y in range(80,101))
+        run(scene(0,0))
         run(scene(0,0))
         run(scene(40,95))
         assert run.state==1 and run.mask==15, 'Departure flags leaked into next junction'
@@ -181,10 +185,26 @@ def check_upper_identity():
         assert run.state==2 and run.corners[5]!=run.corners[4]
     print('PASS: original shoulder identity wins over nearer bend corner; no progressive migration; staggered shoulders supported')
 
+def check_two_cross_limit():
+    for integrated in (False, True):
+        run = machine(integrated=integrated)
+        for _ in range(2):
+            run(scene(40, 95))
+            assert run.state == 1
+            run(scene(0, 0))
+            assert run.state == 4
+            run(scene(0, 0))
+            assert run.state == 0
+        result = run(scene(40, 95))
+        assert run.state == 0 and run.mask == 0
+        assert bytes(result[1]) == run.base_mid and bytes(result[3]) == run.base_valid
+    print('PASS: two completed crossings, third skips detection and preserves ordinary tracking')
+
 if __name__=='__main__':
     check()
     check_corner_tracking()
     check_corner_tracking(integrated=True)
     check_lower_departure()
     check_upper_identity()
+    check_two_cross_limit()
 

@@ -35,9 +35,10 @@ def drive(run, bottom_exit=False, curved=True):
         if expected: assert run.state==0, "cross reconstruction active inside ring"
         if tag is not None:
             assert valid[90]==tag,(expected,valid[90],tag)
-        if expected==3:
-            for y in range(H):
-                if edges[y]==3 and run.base_valid[y]==2: assert mid[y]==run.base_mid[y] and valid[y]==2
+        if expected in (2,3):
+            assert all(tag in (0,5) for tag in valid)
+            if not run.island:
+                assert not any(valid)
         if expected==0:
             assert bytes(mid)==run.base_mid and bytes(valid)==run.base_valid
         return mid,valid
@@ -45,10 +46,17 @@ def drive(run, bottom_exit=False, curved=True):
     step(approach(),1,4)
     step(approach(34,99 if bottom_exit else 109,None),1,4)
     assert run.island
+    from struct import unpack_from
+    half=unpack_from('<H',run.s1_width,180)[0]//2
+    assert half!=unpack_from('<H',run.fixed_width,180)[0]//2
     for state in (1,2,2):
-        step(approach(42,None,None,True),state,5 if state==2 else 4)
+        mid,_=step(approach(42,None,None,True),state,5 if state==2 else 4)
+        if state==2:
+            assert mid[90]==28+half
     for state in (2,2,3):
-        step(bend,state)
+        mid,_=step(approach(-1,None,None,True),state,5)
+        assert mid[90]==28+half
+    step(bend,3,0)
     assert not run.island
     for state in (3,3,4):
         frame=junction(curved)
@@ -111,12 +119,19 @@ def check():
         virtual=mx+int((lx-mx)*(90-my)/(ly-my))
         assert valid[90]==4 and mid[90]==(virtual+right[90])//2
         saved=cold.s1_width
+        # Both ends are calibrated from the bridge even on a cold start.
+        for y in (my-1,ly+1):
+            half=unpack_from('<H',saved,2*y)[0]//2
+            assert half>0 and valid[y]==4 and mid[y]==max(0,right[y]-half)
         original=cold.fixed_width
         previous=mid[90]
         # Lower corner disappears: use the saved bridge half-width, not calibration.
         _,mid,right,valid,_=cold(approach(34,99,None))
         assert cold.ring==1 and cold.s1_width==saved
         assert valid[90]==4 and mid[90]==previous
+        for y in (my-1,ly+1):
+            half=unpack_from('<H',saved,2*y)[0]//2
+            assert valid[y]==4 and mid[y]==max(0,right[y]-half)
         assert mid[90]==right[90]-unpack_from('<H',saved,180)[0]//2
         # Right edge moves while the learned half-width remains frozen.
         moved=approach(34,99,None)

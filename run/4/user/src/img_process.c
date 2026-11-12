@@ -636,8 +636,15 @@ void cross_detect(const uint8_t *image, uint8_t rows, uint8_t cols)
 #define CROSS_PATH_SLOPE_Q8 256 /* x(y): 每行最多横移1像素，允许零斜率。 */
 uint8_t cross_path_state; /* 0普通，1上下连接，2双侧拟合，3混合，4本帧依据不足 */
 uint8_t cross_draw_left[256], cross_draw_right[256], cross_draw_flags[256];
-static uint8_t cross_pass_active, cross_seen_gap, cross_rows, cross_cols;
-static uint16_t cross_entry_width;
+static uint8_t cross_pass_active, cross_rows, cross_cols;
+static uint8_t cross_upper_missing_frames;
+static uint8_t cross_completed_passes;
+
+static void cross_reset_pass(void)
+{
+    cross_pass_active = cross_path_state = cross_upper_tracking = 0;
+    cross_upper_missing_frames = 0;
+}
 
 /* 从当前远端角点沿真实出口边界向上跟踪，普通补线数据不参与拟合。 */
 static int cross_fit_exit(const uint8_t *image,int rows,int cols,int side,int *slope,int *origin)
@@ -675,39 +682,36 @@ void cross_process(const uint8_t *image,uint8_t rows,uint8_t cols,
     memset(cross_draw_flags,0,sizeof(cross_draw_flags));
     if(!image || !left || !mid || !right || rows<16 || cols<32 ||
        control_first>control_last || control_last>=rows)
-    {cross_pass_active=cross_seen_gap=cross_path_state=cross_upper_tracking=0;return;}
+    {cross_reset_pass();return;}
     if(rows!=cross_rows || cols!=cross_cols)
-    {cross_pass_active=cross_seen_gap=cross_upper_tracking=0;cross_rows=rows;cross_cols=cols;}
+    {cross_reset_pass();cross_rows=rows;cross_cols=cols;}
+    /* 每次启动只处理两个十字；完成后跳过预筛和角点扫描。 */
+    if (cross_completed_passes >= 2) return;
     cross_detect(image,rows,cols);
     for(int y=0;y<rows;++y) {cross_draw_left[y]=left[y];cross_draw_right[y]=right[y];}
     if(!cross_pass_active)
     {
         cross_path_state=0;
         if(!img_cross.detected) return;
-        cross_pass_active=1;cross_seen_gap=0;
+        cross_pass_active=1;
         cross_upper_tracking=1;
         cross_capture_shoulder(cols);
         cross_start_lower(rows);
         cross_initial_upper_width=img_cross.corner_x[1]-img_cross.corner_x[0];
         cross_remember_upper();
-        cross_entry_width=img_cross.corner_x[3]-img_cross.corner_x[2];
-        for(int y=control_last;y<rows;++y)
-            if(img_line_valid[y]==2 && right[y]>left[y])
-            {cross_entry_width=right[y]-left[y];break;}
     }
-    /* 先检查原始双边恢复，后覆盖中线。入口完整时不立即退出。 */
-    int normal=1,gap=0;
-    for(int y=control_first;y<rows;++y)
+    /* 双上角连续两帧消失时，在覆盖普通中线前交还控制。 */
+    if ((img_cross.corner_mask & 3) == 0)
     {
-        int width=(int)right[y]-left[y];
-        int good=img_line_valid[y]==2 && img_edge_valid[y]==3 &&
-                 width*2>=cross_entry_width && width*2<=cross_entry_width*3;
-        if(!good) normal=0;
-        if(y<=control_last && !good) ++gap;
+        if (++cross_upper_missing_frames >= 2)
+        {
+            ++cross_completed_passes;
+            cross_reset_pass();
+            return;
+        }
     }
-    if(cross_seen_gap && normal)
-    {cross_pass_active=cross_seen_gap=cross_path_state=cross_upper_tracking=0;return;}
-    if(gap>(control_last-control_first)/2) cross_seen_gap=1;
+    else cross_upper_missing_frames = 0;
+
     // 两个当前上角点必须一起有效；禁止单个错点与普通边线拼成细通道。
     if((img_cross.corner_mask&3)!=3)
     {

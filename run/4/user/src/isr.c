@@ -36,11 +36,15 @@
 #include "zf_common_headfile.h"
 #include "isr.h"
 #include "main.h"
+#include "reverse_process.h"
 
 int16 encoder_data_1 = 0;
 int16 encoder_data_2 = 0;
 int16 encoder_data_3 = 0;
 int16 encoder_data_4 = 0;
+
+/* 里程计：10 ms 累加两轮编码器绝对值的平均，用于量距离 / 倒车定位。 */
+volatile float enc_distance = 0.0f;
 
 /* 斑马线反向制动的计时（10 ms 一拍） */
 static uint8_t zebra_brake_ticks = 0;
@@ -68,19 +72,50 @@ void PIT_IRQHandler(void)
         encoder_clear_count(ENCODER_1);                // 清空编码器计数
         encoder_data_2 = +encoder_get_count(ENCODER_2);
         encoder_clear_count(ENCODER_2);
+        {
+            float d1 = (float)encoder_data_1, d2 = (float)encoder_data_2;
+            if (d1 < 0.0f) d1 = -d1;
+            if (d2 < 0.0f) d2 = -d2;
+            /* 死区：静止时编码器可能因电噪声/微振动产生 ±1 计数，
+             * 长时间累加会一直往上漂，这里把小幅计数当 0。 */
+            #define ENC_DEADBAND 2.0f
+            if (d1 <= ENC_DEADBAND) d1 = 0.0f;
+            if (d2 <= ENC_DEADBAND) d2 = 0.0f;
+            enc_distance += (d1 + d2) * 0.5f;
+        }
 
         float target = zebra_motor_target(speed_target);
-        if (target <= 0.0f)
+        if (reverse_drive_enable)
+        {
+            /* 倒车 / 倒车刹车：方向由 reverse_dir_forward 决定，占空比由 reverse_process 给出 */
+            speed_real = (encoder_data_1 + encoder_data_2) * 0.5f;
+            if (reverse_dir_forward)
+            {
+                gpio_set_level(MOTOR1_DIR, MOTOR1_FORWARD_DIR_LEVEL);
+                gpio_set_level(MOTOR2_DIR, MOTOR2_FORWARD_DIR_LEVEL);
+            }
+            else
+            {
+                gpio_set_level(MOTOR1_DIR,
+                    MOTOR1_FORWARD_DIR_LEVEL == GPIO_HIGH ? GPIO_LOW : GPIO_HIGH);
+                gpio_set_level(MOTOR2_DIR,
+                    MOTOR2_FORWARD_DIR_LEVEL == GPIO_HIGH ? GPIO_LOW : GPIO_HIGH);
+            }
+            pwm_set_duty(MOTOR1_PWM, reverse_pwm);
+            pwm_set_duty(MOTOR2_PWM, reverse_pwm);
+        }
+        else if (target <= 0.0f)
         {
             /* 斑马线停车：反向制动，最多 200 ms。
              * 反向占空比按当前转速成比例，速度为 0 或超时后彻底断电。 */
-            #define ZEBRA_BRAKE_K       40      /* 每 1 个编码器计数对应的反向占空比 */
-            #define ZEBRA_BRAKE_MAX     1200    /* 反向占空比上限（满量程 10000） */
+            #define ZEBRA_BRAKE_K       50      /* 每 1 个编码器计数对应的反向占空比 */
+            #define ZEBRA_BRAKE_MAX     1600    /* 反向占空比上限（满量程 10000） */
             #define ZEBRA_BRAKE_MIN     1       /* 转速低于此值直接断电 */
             #define ZEBRA_BRAKE_TICKS   40      /* 最多制动 400 ms */
-            #define ZEBRA_BRAKE_MIN_PWM 400     /* 低速时保持的最小反向占空比，防止滚动 */
+            #define ZEBRA_BRAKE_MIN_PWM 500     /* 低速时保持的最小反向占空比，防止滚动 */
             int speed1 = encoder_data_1 < 0 ? -encoder_data_1 : encoder_data_1;
             int speed2 = encoder_data_2 < 0 ? -encoder_data_2 : encoder_data_2;
+            speed_real = encoder_data_1;   /* 停车期间也要更新，供倒车模块判断停稳 */
             speed_pwm = 0.0f;
             if (zebra_stop_requested && zebra_brake_ticks < ZEBRA_BRAKE_TICKS &&
                 (speed1 > ZEBRA_BRAKE_MIN || speed2 > ZEBRA_BRAKE_MIN))

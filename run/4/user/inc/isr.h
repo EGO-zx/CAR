@@ -29,4 +29,6 @@ extern int16 encoder_data_3;
 extern int16 encoder_data_4;
 
 
+extern volatile float enc_distance;   /* odometer */
+
 #endif

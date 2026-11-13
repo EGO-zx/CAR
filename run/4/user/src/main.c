@@ -1,6 +1,8 @@
 #include "ring_process.h"
 #include "ring_s3_exit.h"
 #include "main.h" // 所有引脚信息更改在main.h里改宏
+#include "isr.h"  // 需要 zf_common 的 int16 定义，必须放在 main.h 之后
+#include "reverse_process.h"
 
 // *************************** 例程硬件连接说明 ***************************
 /*
@@ -317,6 +319,8 @@ int main(void)
             ring_reset_all();
             steer_lost_frames = 0;
             steer_have_last = 0;
+            enc_distance = 0.0f;
+            reverse_reset();
             pwm_set_duty(SERVO_MOTOR_PWM, SERVO_MOTOR_DUTY(servo_motor_duty_middle));
         }
 
@@ -361,7 +365,7 @@ int main(void)
                 steer_lost_frames = 0;
                 steer_last_error = mid_err;
                 //舵机根据误差乘以系数打角
-                float tmp_duty = servo_motor_duty_middle - mid_err * 0.3f * SERVO_DIR;
+                float tmp_duty = servo_motor_duty_middle - mid_err * 0.4f * SERVO_DIR;
                 // 限幅
                 tmp_duty = MAX(tmp_duty,MIN(SERVO_MOTOR_L_MAX,SERVO_MOTOR_R_MAX));
                 tmp_duty = MIN(tmp_duty,MAX(SERVO_MOTOR_L_MAX,SERVO_MOTOR_R_MAX));
@@ -423,6 +427,10 @@ int main(void)
 						//float tmp_duty = servo_motor_duty_middle - dir_out * SERVO_DIR;
 						
 						
+            /* 倒车流程：停车后等停稳 → 反向开到 REVERSE_DISTANCE_COUNTS → 停住。
+             * 放在转向之后调用，倒车期间由它接管舵机。 */
+            reverse_update();
+
             if (display_due < DISPLAY_FRAME_INTERVAL) ++display_due;
             if (display_due == DISPLAY_FRAME_INTERVAL && !mt9v03x_finish_flag)
             {

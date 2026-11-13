@@ -128,6 +128,12 @@ static void finish_ring(void)
     memset(s1_bridge_width,0,sizeof(s1_bridge_width));
 }
 
+/* 复位环岛状态机与全部缓存，相当于重新上电后的初始状态。 */
+void ring_reset_all(void)
+{
+    finish_ring();
+}
+
 /* Re-seed from the measured left shoulder below a confirmed exit corner.
  * The component detector must still confirm a bounded, curved inner island. */
 static void reacquire_at_exit(const uint8_t *image,int rows,int cols,

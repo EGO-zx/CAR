@@ -68,6 +68,9 @@ void Init()
     // 舵机
     pwm_init(SERVO_MOTOR_PWM, SERVO_MOTOR_FREQ, 0);
 
+    // 按键：C12(KEY4)=低速档 1500，C13(KEY3)=高速档 1800；扫描周期 10 ms
+    key_init(10);
+
     // PID初始化
     My_Pid_Init();
 
@@ -101,6 +104,9 @@ static uint16_t steer_lost_frames;
 static float steer_last_duty;
 static float steer_last_error;
 static uint8_t steer_have_last;
+
+/* 速度档位：1 = 高速（PWM 上限 1800），0 = 低速（1500）。 */
+static uint8_t speed_mode_high = 1;
 
 // 三角权重：中心行权重11，两端权重1；只累计有效行并重新归一化。
 // 双边实测和单边补线均参与；全段无效时返回0，保持上一舵机指令。
@@ -249,6 +255,8 @@ static void display_track_image(void)
         tft180_show_string(80, 112, "M:");
         tft180_show_int(96, 112, img_cross.corner_mask, 2);
     }
+    /* 速度档位：H=高速(1800)，L=低速(1500)，画在第一行右侧空位。 */
+    tft180_show_string(112, 112, speed_mode_high ? "H" : "L");
     // 一次发送合成画面，避免先擦掉旧线、后叠加新线造成额外闪烁。
     tft180_show_rgb565_image(0, 0, (const uint16 *)display_image,
                             IMAGE_DISPLAY_W, IMAGE_DISPLAY_H,
@@ -277,6 +285,41 @@ int main(void)
     unsigned display_due = DISPLAY_FRAME_INTERVAL;
     while (1)
     {
+        /* C12(KEY4) → 低速 1500；C13(KEY3) → 高速 1800。
+         * 改的是 PID 结构体里的 outmax，改全局 speed_OUTMAX 不会生效。 */
+        if (key_get_state(KEY_4) != KEY_RELEASE)
+        {
+            key_clear_state(KEY_4);
+            if (speed_mode_high)
+            {
+                speed_mode_high = 0;
+                speed_pid_l.outmax = 1500.0f;
+                speed_pid_r.outmax = 1500.0f;
+            }
+        }
+        if (key_get_state(KEY_3) != KEY_RELEASE)
+        {
+            key_clear_state(KEY_3);
+            if (!speed_mode_high)
+            {
+                speed_mode_high = 1;
+                speed_pid_l.outmax = 1800.0f;
+                speed_pid_r.outmax = 1800.0f;
+            }
+        }
+        /* C14(KEY2) → 一键复位：斑马线计数与停车锁存、十字计数、环岛状态机、
+         * 丢线自救状态，并把舵机回中。相当于重新上电。 */
+        if (key_get_state(KEY_2) != KEY_RELEASE)
+        {
+            key_clear_state(KEY_2);
+            zebra_reset_counters();
+            cross_reset_counters();
+            ring_reset_all();
+            steer_lost_frames = 0;
+            steer_have_last = 0;
+            pwm_set_duty(SERVO_MOTOR_PWM, SERVO_MOTOR_DUTY(servo_motor_duty_middle));
+        }
+
         //  mt9v03x摄像头
         if (mt9v03x_finish_flag)
         {
@@ -318,7 +361,7 @@ int main(void)
                 steer_lost_frames = 0;
                 steer_last_error = mid_err;
                 //舵机根据误差乘以系数打角
-                float tmp_duty = servo_motor_duty_middle - mid_err * 0.4f * SERVO_DIR;
+                float tmp_duty = servo_motor_duty_middle - mid_err * 0.3f * SERVO_DIR;
                 // 限幅
                 tmp_duty = MAX(tmp_duty,MIN(SERVO_MOTOR_L_MAX,SERVO_MOTOR_R_MAX));
                 tmp_duty = MIN(tmp_duty,MAX(SERVO_MOTOR_L_MAX,SERVO_MOTOR_R_MAX));

@@ -42,6 +42,9 @@ int16 encoder_data_2 = 0;
 int16 encoder_data_3 = 0;
 int16 encoder_data_4 = 0;
 
+/* 斑马线反向制动的计时（10 ms 一拍） */
+static uint8_t zebra_brake_ticks = 0;
+
 
 
 void CSI_IRQHandler(void)
@@ -59,6 +62,7 @@ void PIT_IRQHandler(void)
 {
     if (pit_flag_get(PIT_CH0))
     {
+        key_scanner();   /* 10 ms 扫描一次按键（key_init(10)） */
         // 获取编码器读数
         encoder_data_1 = -encoder_get_count(ENCODER_1); // 获取编码器计数
         encoder_clear_count(ENCODER_1);                // 清空编码器计数
@@ -75,7 +79,6 @@ void PIT_IRQHandler(void)
             #define ZEBRA_BRAKE_MIN     1       /* 转速低于此值直接断电 */
             #define ZEBRA_BRAKE_TICKS   40      /* 最多制动 400 ms */
             #define ZEBRA_BRAKE_MIN_PWM 400     /* 低速时保持的最小反向占空比，防止滚动 */
-            static uint8_t zebra_brake_ticks = 0;
             int speed1 = encoder_data_1 < 0 ? -encoder_data_1 : encoder_data_1;
             int speed2 = encoder_data_2 < 0 ? -encoder_data_2 : encoder_data_2;
             speed_pwm = 0.0f;
@@ -106,6 +109,7 @@ void PIT_IRQHandler(void)
         }
         else
         {
+            zebra_brake_ticks = 0;   /* 正常行驶时清零，停车请求复位后可重新计时 */
             // 编码器值即为速度值
             speed_real = encoder_data_1;
             // PID更新

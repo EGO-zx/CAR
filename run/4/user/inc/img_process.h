@@ -56,4 +56,7 @@ extern volatile uint8_t zebra_stop_requested;
 extern uint8_t zebra_pass_count;
 void zebra_race_update(uint8_t eligible);
 float zebra_motor_target(float cruise_target);
+/* 复位斑马线计数与停车锁存；复位十字计数与当前通行状态 */
+void zebra_reset_counters(void);
+void cross_reset_counters(void);
 #endif

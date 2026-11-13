@@ -4,6 +4,8 @@
 typedef struct { s1_point_t upper,middle,lower,shoulder,candidate,anchor; } ring_marks_t;
 const ring_marks_t *ring_frame_marks(void);
 uint8_t ring_current_state(void);
+/* 复位环岛状态机与缓存（相当于重新上电） */
+void ring_reset_all(void);
 void track_special_process(const uint8_t *image,uint8_t rows,uint8_t cols,
     const uint8_t *left,uint8_t *mid,const uint8_t *right,
     uint8_t control_first,uint8_t control_last);

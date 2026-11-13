@@ -261,3 +261,29 @@
 - 验证：Keil 0 错误 0 警告；十字 2+6 项、环岛 4 项、曲线 9 项、斑马线 4 项回归全部通过。实车验证：环岛、十字、斑马线正常；发卡弯在放大自救后能拐回赛道。
 - 已知问题：直道上仍有轻微高频抖动，怀疑与斑马线检测每帧运行的 CPU 负载有关，尚未定论。
 - 撤回：删除 `get_weighted_mid_error` 内 P/S 判据可回到纯 C=0 触发；把自救分支的 `cross_path_state != 0` 判断改回 `ring_current_state() == 0` 可恢复“普通巡线只保持”。
+
+## CHANGE-020：按键切换速度档位（C12 低速 / C13 高速）
+
+- 时间：2026-11-13 中午（北京时间）。
+- 文件：`user/src/main.c`、`user/src/isr.c`、本日志。
+- 功能：C12（KEY4）切低速档，PWM 上限 1500；C13（KEY3）切高速档，PWM 上限 1800。上电默认高速档。
+- 实现：`Init()` 中 `key_init(10)`；`key_scanner()` 放在 10 ms 电机中断里；主循环检测按键状态后修改 `speed_pid_l.outmax` 与 `speed_pid_r.outmax`。注意全局 `speed_OUTMAX` 在 `Pid_Param_Init()` 时已被拷贝进 PID 结构体，运行时改它不生效。
+- 显示：屏幕第一行右侧标 H（高速）/ L（低速），位置 x=112、y=112，不与 X/P/M 冲突。
+- 已知现象：短按有时需要按两次。原因是 `key_scanner()` 的 `KEY_SHORT_PRESS` 状态只保持一个扫描周期（10 ms），而主循环按摄像头帧节奏约 20 ms 轮询一次，可能正好错过。按住约 0.5 秒以上即可稳定触发。当前接受该行为，未做锁存修改；若需彻底解决，应在 10 ms 中断里把短按事件锁存成标志位，主循环只读标志。
+- 验证：Keil 0 错误 0 警告；按键可切换档位，屏幕 H/L 同步变化；回归测试全绿。
+
+## CHANGE-021：C14 一键复位（斑马线、十字、环岛、自救）
+
+- 时间：2026-11-13 中午（北京时间）。
+- 文件：`user/src/main.c`、`user/src/img_process.c`、`user/inc/img_process.h`、`user/src/ring_process.c`、`user/inc/ring_process.h`、`user/src/isr.c`、本日志。
+- 功能：C14（KEY2）一键把程序恢复到“刚上电”的状态，不必重新烧录或复位。
+- 复位内容：
+  - 斑马线：通过计数 `zebra_pass_count`、停车锁存 `zebra_stop_requested`、候选/连续帧计数、重新武装标志，全部清零。
+  - 十字：通过计数 `cross_completed_passes`、当前通行状态、角点信息、补线标志，全部清零。
+  - 环岛：调用 `ring_reset_all()` → `finish_ring()`，状态机回 0，内岛跟踪、S1/S3/S4 搜索、半宽表全部清空。
+  - 丢线自救：帧计数与“最后舵角”标记清零。
+  - 舵机：立即回中。
+- 新增接口：`zebra_reset_counters()`、`cross_reset_counters()`（`img_process.c`），`ring_reset_all()`（`ring_process.c`）。
+- 附带修复：反向制动的计时 `zebra_brake_ticks` 原来是有函数内静态变量，停车一次后就再不复位，复位斑马线后第二次停车会没有制动。现改为文件级静态变量，并在正常行驶分支中清零。
+- 注意：复位键不改变速度档位（H/L 保持），也不改 PID 参数。
+- 验证：Keil 0 错误 0 警告；按键后屏幕 `Z:`、`R:` 归零；回归测试全绿。

@@ -34,31 +34,44 @@ volatile uint8_t zebra_stop_requested;
 uint8_t zebra_pass_count;
 static uint8_t zebra_rows, zebra_cols;
 static int zebra_prev_y, zebra_prev_x, zebra_prev_width;
+static uint8_t zebra_armed = 1, zebra_clear_frames;
 
 static int zebra_abs(int value) { return value < 0 ? -value : value; }
+
+/* 复位斑马线计数与停车锁存，相当于重新上电后的初始状态。 */
+void zebra_reset_counters(void)
+{
+    zebra_pass_count = 0;
+    zebra_stop_requested = 0;
+    zebra_armed = 1;
+    zebra_clear_frames = 0;
+    img_zebra.detected = 0;
+    img_zebra.candidate = 0;
+    img_zebra.hits = 0;
+    img_zebra.misses = 0;
+}
 
 // 两次识别之间要求连续空帧，防止同一条斑马线因短时漏检重复计数。
 #define ZEBRA_REARM_FRAMES 12
 void zebra_race_update(uint8_t eligible)
 {
-    static uint8_t armed = 1, clear_frames;
     if (zebra_stop_requested) return;
     if (!eligible || img_zebra.candidate)
     {
-        clear_frames = 0;
-        if (eligible && armed && img_zebra.hits >= ZEBRA_CONFIRM_FRAMES)
+        zebra_clear_frames = 0;
+        if (eligible && zebra_armed && img_zebra.hits >= ZEBRA_CONFIRM_FRAMES)
         {
             ++zebra_pass_count;
-            armed = 0;
+            zebra_armed = 0;
         }
         return;
     }
-    if (armed) return;
-    ++clear_frames;
-    if (zebra_pass_count == 2 && clear_frames >= ZEBRA_RELEASE_FRAMES)
+    if (zebra_armed) return;
+    ++zebra_clear_frames;
+    if (zebra_pass_count == 2 && zebra_clear_frames >= ZEBRA_RELEASE_FRAMES)
         zebra_stop_requested = 1;
-    else if (zebra_pass_count == 1 && clear_frames >= ZEBRA_REARM_FRAMES)
-        armed = 1;
+    else if (zebra_pass_count == 1 && zebra_clear_frames >= ZEBRA_REARM_FRAMES)
+        zebra_armed = 1;
 }
 
 // 目标速度在 20 ms 内归零，随后由 10 ms 中断做反向制动（最多 200 ms）。
@@ -880,6 +893,15 @@ static void cross_reset_pass(void)
 {
     cross_pass_active = cross_path_state = cross_upper_tracking = 0;
     cross_upper_missing_frames = 0;
+}
+
+/* 复位十字计数与当前通行状态，相当于重新上电后的初始状态。 */
+void cross_reset_counters(void)
+{
+    cross_completed_passes = 0;
+    cross_reset_pass();
+    memset(&img_cross, 0, sizeof(img_cross));
+    memset(cross_draw_flags, 0, sizeof(cross_draw_flags));
 }
 
 /* 从当前远端角点沿真实出口边界向上跟踪，普通补线数据不参与拟合。 */

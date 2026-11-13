@@ -165,9 +165,9 @@ def check_race():
     assert run.race == (2, 1)
     run(stripe)
     assert run.race == (2, 1), 'Stop request must stay latched'
-    speeds = [run.motor_target(30) for _ in range(60)]
-    assert 30 > speeds[0] > 29 and speeds[-1] == 7.5, (speeds[0], speeds[-1])
-    assert all(a > b for a, b in zip(speeds, speeds[1:]))
+    speeds = [run.motor_target(30) for _ in range(45)]
+    # 目标速度 20 ms 内归零（两拍），实际制动由 10 ms 中断里的反向 PWM 完成。
+    assert speeds[0] == 15 and speeds[1] == 0 and all(s == 0 for s in speeds[2:]), speeds[:3]
     assert run.motor_target(30) == run.motor_target(30) == 0
     print('PASS: start crossing, rearm, second crossing, dropout rejection, latched stop')
 

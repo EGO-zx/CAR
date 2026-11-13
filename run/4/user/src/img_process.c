@@ -61,15 +61,17 @@ void zebra_race_update(uint8_t eligible)
         armed = 1;
 }
 
-// PIT 每10 ms 调用一次：600 ms 内降至巡航目标的25%，随后切断驱动。
-#define ZEBRA_SLOW_TICKS 60
+// 目标速度在 20 ms 内归零，随后由 10 ms 中断做反向制动（最多 200 ms）。
+#define ZEBRA_STOP_DELAY_TICKS 0
+#define ZEBRA_SLOW_TICKS       2
 float zebra_motor_target(float cruise_target)
 {
     static uint8_t ticks;
     if (!zebra_stop_requested) return cruise_target;
-    if (ticks == ZEBRA_SLOW_TICKS) return 0.0f;
+    if (ticks >= ZEBRA_STOP_DELAY_TICKS + ZEBRA_SLOW_TICKS) return 0.0f;
     ++ticks;
-    return cruise_target * (1.0f - 0.75f * ticks / ZEBRA_SLOW_TICKS);
+    return cruise_target *
+        (1.0f - (float)(ticks - ZEBRA_STOP_DELAY_TICKS) / (float)ZEBRA_SLOW_TICKS);
 }
 
 /* 必须在邻近完整赛道内：使用当前帧正常双边行，避开被黑条切碎的行。

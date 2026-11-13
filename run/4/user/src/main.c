@@ -90,13 +90,28 @@ uint8_t right_line[MT9V03X_H];
 #error "Steering window must be inside the camera image"
 #endif
 
+// 丢线自救参数
+#define LOST_RECOVERY_ENABLE 1     // 0 = 关闭自救，回到原「保持上一指令」行为
+#define LOST_HOLD_FRAMES   1       // 丢线后先保持原舵角的帧数
+#define LOST_SEARCH_STEP   0.60f   // 之后每帧增加的搜索强度（越大越急）
+#define LOST_SEARCH_MAX    3.5f    // 搜索强度上限（相对正常增益）
+#define LOST_SEARCH_TIMEOUT 25     // 搜索超过这么多帧（约0.5s）就回中，不再原地转
+
+static uint16_t steer_lost_frames;
+static float steer_last_duty;
+static float steer_last_error;
+static uint8_t steer_have_last;
+
 // 三角权重：中心行权重11，两端权重1；只累计有效行并重新归一化。
 // 双边实测和单边补线均参与；全段无效时返回0，保持上一舵机指令。
 static int control_rows, control_error;
+static int control_paired, control_single;   /* 控制窗口内：双边实测行数 / 单边补偿行数 */
 static int get_weighted_mid_error(float *error)
 {
     control_rows = 0;
     control_error = 0;
+    control_paired = 0;
+    control_single = 0;
     int weighted_error = 0;
     int weight_sum = 0;
     for (int row = STEER_LOOKAHEAD_ROW - STEER_WINDOW_RADIUS;
@@ -105,6 +120,8 @@ static int get_weighted_mid_error(float *error)
         int distance = row - STEER_LOOKAHEAD_ROW;
         int weight;
         if (!img_line_valid[row]) continue;
+        if (img_edge_valid[row] == 3) ++control_paired;
+        else if (img_line_valid[row] == 1) ++control_single;
         if (distance < 0) distance = -distance;
         weight = STEER_WINDOW_RADIUS + 1 - distance;
         ++control_rows;
@@ -112,6 +129,11 @@ static int get_weighted_mid_error(float *error)
         weight_sum += weight;
     }
     if (weight_sum == 0) return 0;
+    /* 提前进入自救：双边实测不足 6 行、单边补偿超过 14 行时，中线已经以推算为主，
+     * 不等它彻底消失就先交给自救，避免“救晚了”。十字处理期间不启用。 */
+    if (ring_current_state() == 0 && cross_path_state == 0 &&
+        control_paired < 3 && control_single >= 18)
+        return 0;
     *error = (float)weighted_error / weight_sum;
     control_error = (int)*error;
     return 1;
@@ -211,6 +233,8 @@ static void display_track_image(void)
     draw_ring_mark(points->upper,up,RGB565_CYAN);
     tft180_show_string(96, 128, "R:");
     tft180_show_int(112, 128, ring_current_state(), 1);
+    /* 第一行先清空，避免不同布局互相残留。 */
+    tft180_show_string(0,112,"                ");
     if(ring_current_state()){
         tft180_show_string(0,112,"C:");
         tft180_show_int(16,112,control_rows,3);
@@ -218,12 +242,12 @@ static void display_track_image(void)
         tft180_show_int(64,112,control_error,4);
         tft180_show_string(96,112,"   ");
     }else{
-    tft180_show_string(0, 112, "X:");
-    tft180_show_int(16, 112, img_cross.detected, 1);
-    tft180_show_string(40, 112, "P:");
-    tft180_show_int(56, 112, cross_path_state, 1);
-    tft180_show_string(80, 112, "M:");
-    tft180_show_int(96, 112, img_cross.corner_mask, 2);
+        tft180_show_string(0, 112, "X:");
+        tft180_show_int(16, 112, img_cross.detected, 1);
+        tft180_show_string(40, 112, "P:");
+        tft180_show_int(56, 112, cross_path_state, 1);
+        tft180_show_string(80, 112, "M:");
+        tft180_show_int(96, 112, img_cross.corner_mask, 2);
     }
     // 一次发送合成画面，避免先擦掉旧线、后叠加新线造成额外闪烁。
     tft180_show_rgb565_image(0, 0, (const uint16 *)display_image,
@@ -286,17 +310,67 @@ int main(void)
                           left_line, mid_line, right_line);
             zebra_race_update(zebra_eligible);
 
-            // 使用一段有效中线的加权偏差；全段无效时保持上一指令。
+            // 使用一段有效中线的加权偏差；全段无效时进入自救。
             float mid_err;
             /* State 4 also steers from its valid island-based midline. */
             if (get_weighted_mid_error(&mid_err))
             {
+                steer_lost_frames = 0;
+                steer_last_error = mid_err;
                 //舵机根据误差乘以系数打角
-                float tmp_duty = servo_motor_duty_middle - mid_err * 0.6f * SERVO_DIR;
+                float tmp_duty = servo_motor_duty_middle - mid_err * 0.4f * SERVO_DIR;
                 // 限幅
                 tmp_duty = MAX(tmp_duty,MIN(SERVO_MOTOR_L_MAX,SERVO_MOTOR_R_MAX));
                 tmp_duty = MIN(tmp_duty,MAX(SERVO_MOTOR_L_MAX,SERVO_MOTOR_R_MAX));
                 pwm_set_duty(SERVO_MOTOR_PWM, SERVO_MOTOR_DUTY(tmp_duty));
+                steer_last_duty = tmp_duty;
+                steer_have_last = 1;
+            }
+            else
+            {
+#if LOST_RECOVERY_ENABLE
+                /* 丢线自救：先保持原舵角，再沿最后看到线的方向逐步加大打角去搜线。 */
+                if (!steer_have_last)
+                {
+                    pwm_set_duty(SERVO_MOTOR_PWM, SERVO_MOTOR_DUTY(servo_motor_duty_middle));
+                }
+                else if (steer_lost_frames < LOST_HOLD_FRAMES)
+                {
+                    ++steer_lost_frames;
+                    pwm_set_duty(SERVO_MOTOR_PWM, SERVO_MOTOR_DUTY(steer_last_duty));
+                }
+                else if (steer_lost_frames >= LOST_SEARCH_TIMEOUT)
+                {
+                    /* 搜索超时：判断已经出界，回中直行，等线重新出现。
+                     * 继续原地打转只会把车带到更差的位置。 */
+                    pwm_set_duty(SERVO_MOTOR_PWM, SERVO_MOTOR_DUTY(servo_motor_duty_middle));
+                }
+                else if (cross_path_state != 0)
+                {
+                    /* 十字处理期间只保持，避免干扰十字补线。 */
+                    ++steer_lost_frames;
+                    pwm_set_duty(SERVO_MOTOR_PWM, SERVO_MOTOR_DUTY(steer_last_duty));
+                }
+                else
+                {
+                    /* 其余所有位置（含普通巡线、发卡弯）：沿最后方向逐帧加大打角找线。 */
+                    ++steer_lost_frames;
+                    float dir = steer_last_error;
+                    if (dir > -2.f && dir < 2.f) dir = (dir >= 0.f) ? 2.f : -2.f;
+                    float amp = 1.0f + LOST_SEARCH_STEP *
+                                (float)(steer_lost_frames - LOST_HOLD_FRAMES);
+                    if (amp > LOST_SEARCH_MAX) amp = LOST_SEARCH_MAX;
+                    float tmp_duty = servo_motor_duty_middle - dir * amp * 0.6f * SERVO_DIR;
+                    tmp_duty = MAX(tmp_duty,MIN(SERVO_MOTOR_L_MAX,SERVO_MOTOR_R_MAX));
+                    tmp_duty = MIN(tmp_duty,MAX(SERVO_MOTOR_L_MAX,SERVO_MOTOR_R_MAX));
+                    pwm_set_duty(SERVO_MOTOR_PWM, SERVO_MOTOR_DUTY(tmp_duty));
+                    steer_last_duty = tmp_duty;
+                }
+#else
+                /* 关闭自救：完全保持上一舵角，和队友原版一致。 */
+                if (steer_have_last)
+                    pwm_set_duty(SERVO_MOTOR_PWM, SERVO_MOTOR_DUTY(steer_last_duty));
+#endif
             }
 						//float mid_err = (MT9V03X_W/2) - mid_line[MT9V03X_H-MT9V03X_H/4];
 						// 方向PD控制

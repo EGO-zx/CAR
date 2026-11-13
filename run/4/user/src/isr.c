@@ -68,9 +68,41 @@ void PIT_IRQHandler(void)
         float target = zebra_motor_target(speed_target);
         if (target <= 0.0f)
         {
+            /* 斑马线停车：反向制动，最多 200 ms。
+             * 反向占空比按当前转速成比例，速度为 0 或超时后彻底断电。 */
+            #define ZEBRA_BRAKE_K       40      /* 每 1 个编码器计数对应的反向占空比 */
+            #define ZEBRA_BRAKE_MAX     1200    /* 反向占空比上限（满量程 10000） */
+            #define ZEBRA_BRAKE_MIN     1       /* 转速低于此值直接断电 */
+            #define ZEBRA_BRAKE_TICKS   40      /* 最多制动 400 ms */
+            #define ZEBRA_BRAKE_MIN_PWM 400     /* 低速时保持的最小反向占空比，防止滚动 */
+            static uint8_t zebra_brake_ticks = 0;
+            int speed1 = encoder_data_1 < 0 ? -encoder_data_1 : encoder_data_1;
+            int speed2 = encoder_data_2 < 0 ? -encoder_data_2 : encoder_data_2;
             speed_pwm = 0.0f;
-            pwm_set_duty(MOTOR1_PWM, 0);
-            pwm_set_duty(MOTOR2_PWM, 0);
+            if (zebra_stop_requested && zebra_brake_ticks < ZEBRA_BRAKE_TICKS &&
+                (speed1 > ZEBRA_BRAKE_MIN || speed2 > ZEBRA_BRAKE_MIN))
+            {
+                int b1 = ZEBRA_BRAKE_K * speed1;
+                int b2 = ZEBRA_BRAKE_K * speed2;
+                if (b1 > ZEBRA_BRAKE_MAX) b1 = ZEBRA_BRAKE_MAX;
+                if (b2 > ZEBRA_BRAKE_MAX) b2 = ZEBRA_BRAKE_MAX;
+                /* 低速时按转速比例算出来的制动量太小，车会一直滚；
+                 * 给一个最小保持量，把车真正按住。 */
+                if (b1 < ZEBRA_BRAKE_MIN_PWM) b1 = ZEBRA_BRAKE_MIN_PWM;
+                if (b2 < ZEBRA_BRAKE_MIN_PWM) b2 = ZEBRA_BRAKE_MIN_PWM;
+                gpio_set_level(MOTOR1_DIR,
+                    MOTOR1_FORWARD_DIR_LEVEL == GPIO_HIGH ? GPIO_LOW : GPIO_HIGH);
+                gpio_set_level(MOTOR2_DIR,
+                    MOTOR2_FORWARD_DIR_LEVEL == GPIO_HIGH ? GPIO_LOW : GPIO_HIGH);
+                pwm_set_duty(MOTOR1_PWM, b1);
+                pwm_set_duty(MOTOR2_PWM, b2);
+                ++zebra_brake_ticks;
+            }
+            else
+            {
+                pwm_set_duty(MOTOR1_PWM, 0);
+                pwm_set_duty(MOTOR2_PWM, 0);
+            }
         }
         else
         {

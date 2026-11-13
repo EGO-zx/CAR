@@ -17,7 +17,241 @@
 
 #include "img_process.h"
 #include "string.h"
+
+/* 7条黑条斑马线：原始二值图检测，不改边界、中线或控制。
+ * 6条可见时要求更多支持行；不以固定跳变总数判定远近。
+ * 所有阈值为120x188图像的初值，须用实拍帧验证。 */
+#define ZEBRA_STRIPES 7
+#define ZEBRA_MIN_ROWS 3
+#define ZEBRA_PARTIAL_ROWS 5
+#define ZEBRA_ANCHOR_DISTANCE 24
+#define ZEBRA_CONFIRM_FRAMES 3
+#define ZEBRA_RELEASE_FRAMES 5
+#define ZEBRA_FRAME_DY 24
+#define ZEBRA_FRAME_DX 16
+img_zebra_info_t img_zebra;
+volatile uint8_t zebra_stop_requested;
+uint8_t zebra_pass_count;
+static uint8_t zebra_rows, zebra_cols;
+static int zebra_prev_y, zebra_prev_x, zebra_prev_width;
+
+static int zebra_abs(int value) { return value < 0 ? -value : value; }
+
+// 两次识别之间要求连续空帧，防止同一条斑马线因短时漏检重复计数。
+#define ZEBRA_REARM_FRAMES 12
+void zebra_race_update(uint8_t eligible)
+{
+    static uint8_t armed = 1, clear_frames;
+    if (zebra_stop_requested) return;
+    if (!eligible || img_zebra.candidate)
+    {
+        clear_frames = 0;
+        if (eligible && armed && img_zebra.hits >= ZEBRA_CONFIRM_FRAMES)
+        {
+            ++zebra_pass_count;
+            armed = 0;
+        }
+        return;
+    }
+    if (armed) return;
+    ++clear_frames;
+    if (zebra_pass_count == 2 && clear_frames >= ZEBRA_RELEASE_FRAMES)
+        zebra_stop_requested = 1;
+    else if (zebra_pass_count == 1 && clear_frames >= ZEBRA_REARM_FRAMES)
+        armed = 1;
+}
+
+// PIT 每10 ms 调用一次：600 ms 内降至巡航目标的25%，随后切断驱动。
+#define ZEBRA_SLOW_TICKS 60
+float zebra_motor_target(float cruise_target)
+{
+    static uint8_t ticks;
+    if (!zebra_stop_requested) return cruise_target;
+    if (ticks == ZEBRA_SLOW_TICKS) return 0.0f;
+    ++ticks;
+    return cruise_target * (1.0f - 0.75f * ticks / ZEBRA_SLOW_TICKS);
+}
+
+/* 必须在邻近完整赛道内：使用当前帧正常双边行，避开被黑条切碎的行。
+ * 连续白区验证也排除把两根黑条之间的小白缝当作完整赛道。 */
+static int zebra_lane(const uint8_t *image, int rows, int cols, int y,
+                      int first, int last, const uint8_t *left, const uint8_t *right)
+{
+    int span = last - first + 1;
+    for (int d = 1; d <= ZEBRA_ANCHOR_DISTANCE; ++d)
+        for (int side = -1; side <= 1; side += 2)
+        {
+            int row = y + side * d, white = 0;
+            int l, r, width;
+            if (row < 0 || row >= rows || img_edge_valid[row] != 3) continue;
+            l = left[row]; r = right[row]; width = r - l - 1;
+            if (l >= r || r >= cols || width < 28) continue;
+            if (span * 100 < width * 45 || span * 100 > width * 110) continue;
+            if (first < l - width / 10 || last > r + width / 10) continue;
+            for (int x = l + 1; x < r; ++x)
+                if (image[row * cols + x]) ++white;
+            if (white * 100 >= width * 95) return 1;
+        }
+    return 0;
+}
+
+void zebra_detect(const uint8_t *image, uint8_t rows, uint8_t cols,
+                  const uint8_t *left, const uint8_t *right)
+{
+    int chain = 0, strong = 0, previous_n = 0;
+    int previous_centers[ZEBRA_STRIPES] = {0};
+    int chain_left = 0, chain_right = 0;
+    uint8_t latched = img_zebra.detected, hits = img_zebra.hits, misses = img_zebra.misses;
+    if (rows != zebra_rows || cols != zebra_cols || !image || !left || !right || rows < 8 || cols < 28)
+    {
+        latched = hits = misses = 0;
+        zebra_rows = rows; zebra_cols = cols;
+    }
+    memset(&img_zebra, 0, sizeof(img_zebra));
+    if (!image || !left || !right || rows < 8 || cols < 28) return;
+    for (int y = rows / 6; y < rows; ++y)
+    {
+        int starts[ZEBRA_STRIPES], ends[ZEBRA_STRIPES];
+        int n = 0, overflow = 0, minw = cols, maxw = 0, ming = cols, maxg = 0;
+        int total = 0, valid = 1;
+        // 仅统计两侧都有白像素的黑段，左右外部黑背景不计入。
+        for (int x = 1; x < cols - 1; ++x)
+        {
+            int start, width;
+            if (image[y * cols + x] || !image[y * cols + x - 1]) continue;
+            start = x;
+            while (x < cols && !image[y * cols + x]) ++x;
+            if (x == cols) break;
+            if (n == ZEBRA_STRIPES) { overflow = 1; break; }
+            starts[n] = start; ends[n] = x - 1; width = x - start;
+            if (width < minw) minw = width;
+            if (width > maxw) maxw = width;
+            total += width;
+            if (n)
+            {
+                int gap = start - ends[n - 1] - 1;
+                if (gap < ming) ming = gap;
+                if (gap > maxg) maxg = gap;
+            }
+            ++n;
+        }
+        if (overflow || n < ZEBRA_STRIPES - 1) valid = 0;
+        if (valid)
+        {
+            int span = ends[n - 1] - starts[0] + 1;
+            // 保留远处1像素黑条，靠多行连续性排除孤立像素。
+            if (maxw > minw * 3 || maxg > ming * 3 || span < 24 ||
+                total * 100 < span * 15 || total * 100 > span * 70 ||
+                !zebra_lane(image, rows, cols, y, starts[0], ends[n - 1], left, right)) valid = 0;
+        }
+        if (!valid) { chain = strong = previous_n = 0; continue; }
+        if (n != previous_n) chain = strong = 0;
+        else
+            for (int k = 0; k < n; ++k)
+                if (zebra_abs(starts[k] + ends[k] - previous_centers[k]) > 6)
+                { chain = strong = 0; break; }
+        if (!chain) { chain_left = starts[0]; chain_right = ends[n - 1]; }
+        if (starts[0] < chain_left) chain_left = starts[0];
+        if (ends[n - 1] > chain_right) chain_right = ends[n - 1];
+        ++chain;
+        if (n == ZEBRA_STRIPES) ++strong;
+        previous_n = n;
+        for (int k = 0; k < n; ++k) previous_centers[k] = starts[k] + ends[k];
+        if (chain >= (strong ? ZEBRA_MIN_ROWS : ZEBRA_PARTIAL_ROWS) && chain > img_zebra.support_rows)
+        {
+            img_zebra.candidate = 1;
+            img_zebra.stripes = n;
+            img_zebra.support_rows = chain;
+            img_zebra.top = y - chain + 1; img_zebra.bottom = y;
+            img_zebra.left = chain_left;
+            img_zebra.right = chain_right;
+        }
+    }
+    if (img_zebra.candidate)
+    {
+        int y = (img_zebra.top + img_zebra.bottom) / 2;
+        int x = (img_zebra.left + img_zebra.right) / 2;
+        int width = img_zebra.right - img_zebra.left + 1;
+        int same = zebra_abs(y - zebra_prev_y) <= ZEBRA_FRAME_DY &&
+                   zebra_abs(x - zebra_prev_x) <= ZEBRA_FRAME_DX &&
+                   width * 2 >= zebra_prev_width && width <= zebra_prev_width * 2;
+        if (!same) { hits = 0; latched = 0; }
+        if (hits < ZEBRA_CONFIRM_FRAMES) ++hits;
+        if (hits >= ZEBRA_CONFIRM_FRAMES) latched = 1;
+        zebra_prev_y = y; zebra_prev_x = x; zebra_prev_width = width;
+        misses = 0;
+    }
+    else
+    {
+        hits = 0;
+        if (misses < ZEBRA_RELEASE_FRAMES) ++misses;
+        if (misses >= ZEBRA_RELEASE_FRAMES) latched = 0;
+    }
+    img_zebra.detected = latched; img_zebra.hits = hits; img_zebra.misses = misses;
+}
        
+uint8_t zebra_draw_flags[256];
+
+// 寻找未被黑条割裂的完整赛道，拒绝细缝、赛道外和不连续白区。
+static int zebra_anchor(const uint8_t *image, int rows, int cols,
+                        const uint8_t *left, const uint8_t *right, int start, int step)
+{
+    int span = img_zebra.right - img_zebra.left + 1;
+    for (int d = 0; d < ZEBRA_ANCHOR_DISTANCE; ++d)
+    {
+        int y = start + d * step, white = 0, l, r, w;
+        if (y < 0 || y >= rows) break;
+        if (img_edge_valid[y] != 3) continue;
+        l = left[y]; r = right[y]; w = r - l - 1;
+        if (w < 28 || r >= cols || span * 100 < w * 45 || span * 100 > w * 110) continue;
+        if (img_zebra.left < l - w / 10 || img_zebra.right > r + w / 10) continue;
+        for (int x = l + 1; x < r; ++x) if (image[y * cols + x]) ++white;
+        if (white * 100 >= w * 95) return y;
+    }
+    return -1;
+}
+
+void zebra_process(const uint8_t *image, uint8_t rows, uint8_t cols,
+                   const uint8_t *left, uint8_t *mid, const uint8_t *right)
+{
+    int a, b, first, last, ca, cb;
+    memset(zebra_draw_flags, 0, sizeof(zebra_draw_flags));
+    if (!image || !left || !mid || !right || !img_zebra.candidate ||
+        !img_zebra.detected || cross_path_state || img_zebra.bottom >= rows ||
+        img_zebra.right >= cols) return;
+    first = img_zebra.top; last = img_zebra.bottom;
+    a = zebra_anchor(image, rows, cols, left, right, first - 1, -1);
+    b = zebra_anchor(image, rows, cols, left, right, last + 1, 1);
+    // 近端移出图像时，用远端两条完整赛道行的方向向下延伸。
+    if (a >= 0 && b < 0)
+    {
+        b = a;
+        a = zebra_anchor(image, rows, cols, left, right, b - 4, -1);
+    }
+    else if (a < 0 && b >= 0)
+        a = zebra_anchor(image, rows, cols, left, right, b + 4, 1);
+    // 无可靠依据时不能继续使用条纹间白缝生成的错误中线。
+    for (int y = first; y <= last; ++y) img_line_valid[y] = 0;
+    if (a < 0 || b < 0 || a == b) return;
+    ca = (left[a] + right[a]) / 2; cb = (left[b] + right[b]) / 2;
+    if (zebra_abs(cb - ca) > zebra_abs(b - a) ||
+        first < (a < b ? a : b) - ZEBRA_ANCHOR_DISTANCE ||
+        last > (a > b ? a : b) + ZEBRA_ANCHOR_DISTANCE) return;
+    for (int y = first; y <= last; ++y)
+    {
+        int center = ca + (cb - ca) * (y - a) / (b - a);
+        if (center < 0 || center >= cols) return;
+    }
+    for (int y = first; y <= last; ++y)
+    {
+        mid[y] = ca + (cb - ca) * (y - a) / (b - a);
+        img_line_valid[y] = 4;
+        zebra_draw_flags[y] = 1;
+    }
+}
+
+
+
 /*
  * 二值化：把灰度图转换成仅含 0 和 255 的黑白图。
  * _img：图像首地址，直接覆盖原图，不额外分配输出图像。

@@ -160,7 +160,8 @@ static void display_track_image(void)
         if (img_line_valid[row])
         {
             int center = mid_line[row] * IMAGE_DISPLAY_W / MT9V03X_W;
-            uint16_t color = img_line_valid[row] >= 2 ? RGB565_RED : RGB565_YELLOW;
+            uint16_t color = zebra_draw_flags[row] ? RGB565_GREEN :
+                             (img_line_valid[row] >= 2 ? RGB565_RED : RGB565_YELLOW);
             for (int x = center - 1; x <= center + 1; ++x)
                 if (x >= 0 && x < IMAGE_DISPLAY_W) display_image[y][x] = color;
         }
@@ -175,6 +176,18 @@ static void display_track_image(void)
             for (int x = cx - 2; x <= cx + 2; ++x)
                 if (x >= 0 && x < IMAGE_DISPLAY_W && y >= 0 && y < IMAGE_DISPLAY_H)
                     display_image[y][x] = img_cross.detected ? RGB565_GREEN : RGB565_YELLOW;
+    }
+    // 仅标记本帧已确认的位置，不把短暂保持的状态画在旧位置。
+    if (img_zebra.detected && img_zebra.candidate)
+    {
+        int l = img_zebra.left * IMAGE_DISPLAY_W / MT9V03X_W;
+        int r = img_zebra.right * IMAGE_DISPLAY_W / MT9V03X_W;
+        int t = img_zebra.top * IMAGE_DISPLAY_H / MT9V03X_H;
+        int b = img_zebra.bottom * IMAGE_DISPLAY_H / MT9V03X_H;
+        for (int x = l; x <= r; ++x)
+            display_image[t][x] = display_image[b][x] = RGB565_GREEN;
+        for (int y = t; y <= b; ++y)
+            display_image[y][l] = display_image[y][r] = RGB565_GREEN;
     }
     const ring_marks_t *points=ring_frame_marks();
     static const uint8_t up[]={4,14,31,0,0},down[]={0,0,31,14,4};
@@ -221,6 +234,9 @@ static void display_track_image(void)
     tft180_show_int(16, 128, valid_rows, 3);
     tft180_show_string(56, 128, "S:");
     tft180_show_int(72, 128, single_rows, 3);
+    tft180_show_string(64, 144, "Z:");
+    tft180_show_int(80, 144, zebra_pass_count, 1);
+    tft180_show_int(96, 144, img_zebra.detected ? 2 : img_zebra.candidate, 1);
 }
 
 #define DISPLAY_FRAME_INTERVAL 4u
@@ -257,10 +273,18 @@ int main(void)
             // 边界线寻找
             auxiliary_process((uint8_t *)image, MT9V03X_H, MT9V03X_W, threshold, left_line, mid_line, right_line);
 
+            zebra_detect((const uint8_t *)image, MT9V03X_H, MT9V03X_W,
+                         left_line, right_line);
             track_special_process((const uint8_t *)image, MT9V03X_H, MT9V03X_W,
                           left_line, mid_line, right_line,
                           STEER_LOOKAHEAD_ROW-STEER_WINDOW_RADIUS,
                           STEER_LOOKAHEAD_ROW+STEER_WINDOW_RADIUS);
+
+            uint8_t zebra_eligible = !ring_current_state() && !cross_path_state;
+            if (!zebra_eligible) img_zebra.candidate = 0;
+            zebra_process((const uint8_t *)image, MT9V03X_H, MT9V03X_W,
+                          left_line, mid_line, right_line);
+            zebra_race_update(zebra_eligible);
 
             // 使用一段有效中线的加权偏差；全段无效时保持上一指令。
             float mid_err;

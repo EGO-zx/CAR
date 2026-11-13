@@ -11,7 +11,7 @@ void binaryzation_process(unsigned char* _img,
 						  const unsigned short _rows, 
 						  const unsigned short _cols, 
 						  const unsigned int _threshold_value);
-// 中线：0无效，1单边补偿，2双边实测，3十字重建；边界：bit0左实测，bit1右实测。
+// 中线：0无效，1单边补偿，2双边实测，3十字重建，4斑马线桥接；边界：bit0左实测，bit1右实测。
 extern uint8_t img_line_valid[256];
 extern uint8_t img_edge_valid[256];
 void auxiliary_process(uint8_t* _src_pixel_mat, uint8_t _src_rows, uint8_t _src_cols, 
@@ -37,4 +37,23 @@ void cross_process(const uint8_t *image,uint8_t rows,uint8_t cols,
                    uint8_t control_first,uint8_t control_last);
 
 const uint16_t *img_track_width(void);
+// candidate为本帧候选；detected经连续帧确认，短暂丢失时保持。
+typedef struct {
+    uint8_t candidate, detected, stripes, support_rows;
+    uint8_t top, bottom, left, right;
+    uint8_t hits, misses;
+} img_zebra_info_t;
+extern img_zebra_info_t img_zebra;
+void zebra_detect(const uint8_t *image, uint8_t rows, uint8_t cols,
+                  const uint8_t *left, const uint8_t *right);
+// 当前帧有效补线标志；只桥接已确认的斑马线区域。
+extern uint8_t zebra_draw_flags[256];
+void zebra_process(const uint8_t *image, uint8_t rows, uint8_t cols,
+                   const uint8_t *left, uint8_t *mid, const uint8_t *right);
+
+// 主循环置位，10 ms 电机中断执行减速。
+extern volatile uint8_t zebra_stop_requested;
+extern uint8_t zebra_pass_count;
+void zebra_race_update(uint8_t eligible);
+float zebra_motor_target(float cruise_target);
 #endif

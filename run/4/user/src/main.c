@@ -3,6 +3,7 @@
 #include "main.h" // 所有引脚信息更改在main.h里改宏
 #include "isr.h"  // 需要 zf_common 的 int16 定义，必须放在 main.h 之后
 #include "reverse_process.h"
+#include "boost_process.h"
 
 // *************************** 例程硬件连接说明 ***************************
 /*
@@ -32,7 +33,11 @@
 // **************************** 代码区域 ****************************
 
 // 舵机动作角度中值
-const float servo_motor_duty_middle = (SERVO_MOTOR_R_MAX + SERVO_MOTOR_L_MAX) / 2.f; 
+const float servo_motor_duty_middle = (SERVO_MOTOR_R_MAX + SERVO_MOTOR_L_MAX) / 2.f;
+
+/* 上一帧舵机指令，用于变化率限制（只在加速段生效） */
+static float servo_out_last;
+
 //float dir_kp = 0.5;      // 方向比例，原来的0.5搬到这里
 //float dir_kd = 0.8;      // 方向微分，新增的
 //float last_mid_err = 0;  // 上一次的偏差，Kd要用
@@ -69,8 +74,12 @@ void Init()
 
     // 舵机
     pwm_init(SERVO_MOTOR_PWM, SERVO_MOTOR_FREQ, 0);
+    servo_out_last = servo_motor_duty_middle;
 
-    // 按键：C12(KEY4)=低速档 1500，C13(KEY3)=高速档 1800；扫描周期 10 ms
+    // 直道加速的两个硬件开关：C27（开关1）与 C26（开关2）
+    boost_init();
+
+    // 按键扫描周期 10 ms
     key_init(10);
 
     // PID初始化
@@ -102,13 +111,25 @@ uint8_t right_line[MT9V03X_H];
 #define LOST_SEARCH_MAX    3.5f    // 搜索强度上限（相对正常增益）
 #define LOST_SEARCH_TIMEOUT 25     // 搜索超过这么多帧（约0.5s）就回中，不再原地转
 
+// 舵机指令变化率限制：每帧最大角度变化（只在加速/减速段生效）
+#define SERVO_SLEW_MAX 2.0f
+
 static uint16_t steer_lost_frames;
 static float steer_last_duty;
 static float steer_last_error;
 static uint8_t steer_have_last;
 
-/* 速度档位：1 = 高速（PWM 上限 1800），0 = 低速（1500）。 */
-static uint8_t speed_mode_high = 1;
+static float   steer_gain = 0.40f;  // 由 boost_process 每帧给出
+static uint8_t cross_seen;          // 第一次识别到十字后置 1
+static uint8_t boost_sw1;           // 开关1（C27）状态
+static uint8_t boost_sw2;           // 开关2（C26）状态
+static uint8_t in_zone_active;      // 本帧是否处于加速/减速段（决定慢打舵机）
+
+/* 速度档位：0 = L（30/1500），1 = M（30/1800，默认），2 = H（十字后 32/2000/0.50）。 */
+#define SPEED_MODE_L 0
+#define SPEED_MODE_M 1
+#define SPEED_MODE_H 2
+static uint8_t speed_mode = SPEED_MODE_M;
 
 // 三角权重：中心行权重11，两端权重1；只累计有效行并重新归一化。
 // 双边实测和单边补线均参与；全段无效时返回0，保持上一舵机指令。
@@ -192,6 +213,8 @@ static void display_track_image(void)
             int center = mid_line[row] * IMAGE_DISPLAY_W / MT9V03X_W;
             uint16_t color = zebra_draw_flags[row] ? RGB565_GREEN :
                              (img_line_valid[row] >= 2 ? RGB565_RED : RGB565_YELLOW);
+            /* 加速区间内做了左移的行：青色标出 */
+            if (boost_bias_rows()[row]) color = RGB565_CYAN;
             for (int x = center - 1; x <= center + 1; ++x)
                 if (x >= 0 && x < IMAGE_DISPLAY_W) display_image[y][x] = color;
         }
@@ -257,8 +280,21 @@ static void display_track_image(void)
         tft180_show_string(80, 112, "M:");
         tft180_show_int(96, 112, img_cross.corner_mask, 2);
     }
-    /* 速度档位：H=高速(1800)，L=低速(1500)，画在第一行右侧空位。 */
-    tft180_show_string(112, 112, speed_mode_high ? "H" : "L");
+    /* 速度档位显示：
+     *   H  = 正常高速档
+     *   HL = 高速 + 直道加速（开关1 C27）
+     *   HH = 高速 + 直道激进加速（开关2 C26）
+     *   L / M 同理，第二个字母表示激活的加速开关。 */
+    {
+        char mode_text[3];
+        mode_text[0] = (speed_mode == SPEED_MODE_L) ? 'L' :
+                       (speed_mode == SPEED_MODE_H) ? 'H' : 'M';
+        mode_text[1] = 0;
+        mode_text[2] = 0;
+        if (boost_sw1) mode_text[1] = 'L';
+        else if (boost_sw2) mode_text[1] = 'H';
+        tft180_show_string(112, 112, mode_text);
+    }
     // 一次发送合成画面，避免先擦掉旧线、后叠加新线造成额外闪烁。
     tft180_show_rgb565_image(0, 0, (const uint16 *)display_image,
                             IMAGE_DISPLAY_W, IMAGE_DISPLAY_H,
@@ -287,33 +323,31 @@ int main(void)
     unsigned display_due = DISPLAY_FRAME_INTERVAL;
     while (1)
     {
-        /* C12(KEY4) → 低速 1500；C13(KEY3) → 高速 1800。
-         * 改的是 PID 结构体里的 outmax，改全局 speed_OUTMAX 不会生效。 */
+        /* C12(KEY4) → L 档（30 / 1500）
+         * C13(KEY3) → M 档（30 / 1800，默认）
+         * C14(KEY2) → H 档（十字后 32 / 2000 / 0.50）
+         * 这里只切档位标志，实际 outmax 由 boost_process 每帧统一设置。 */
         if (key_get_state(KEY_4) != KEY_RELEASE)
         {
             key_clear_state(KEY_4);
-            if (speed_mode_high)
-            {
-                speed_mode_high = 0;
-                speed_pid_l.outmax = 1500.0f;
-                speed_pid_r.outmax = 1500.0f;
-            }
+            speed_mode = SPEED_MODE_L;
+        }
+        if (key_get_state(KEY_2) != KEY_RELEASE)
+        {
+            key_clear_state(KEY_2);
+            speed_mode = SPEED_MODE_H;
         }
         if (key_get_state(KEY_3) != KEY_RELEASE)
         {
             key_clear_state(KEY_3);
-            if (!speed_mode_high)
-            {
-                speed_mode_high = 1;
-                speed_pid_l.outmax = 1800.0f;
-                speed_pid_r.outmax = 1800.0f;
-            }
+            speed_mode = SPEED_MODE_M;
         }
-        /* C14(KEY2) → 一键复位：斑马线计数与停车锁存、十字计数、环岛状态机、
-         * 丢线自救状态，并把舵机回中。相当于重新上电。 */
-        if (key_get_state(KEY_2) != KEY_RELEASE)
+        /* C15(KEY1) → 一键复位：斑马线、十字、环岛、自救、倒车、加速状态全部清零，
+         * 回到 M 档，舵机回中。相当于重新上电。 */
+        if (key_get_state(KEY_1) != KEY_RELEASE)
         {
-            key_clear_state(KEY_2);
+            key_clear_state(KEY_1);
+            speed_mode = SPEED_MODE_M;
             zebra_reset_counters();
             cross_reset_counters();
             ring_reset_all();
@@ -321,6 +355,8 @@ int main(void)
             steer_have_last = 0;
             enc_distance = 0.0f;
             reverse_reset();
+            boost_reset();
+            cross_seen = 0;
             pwm_set_duty(SERVO_MOTOR_PWM, SERVO_MOTOR_DUTY(servo_motor_duty_middle));
         }
 
@@ -357,6 +393,23 @@ int main(void)
                           left_line, mid_line, right_line);
             zebra_race_update(zebra_eligible);
 
+            /* 第一次识别到十字后，H 档尾段策略从此刻起生效到终点。 */
+            if (img_cross.detected) cross_seen = 1;
+
+            /* 直道加速/减速策略全部在 boost_process 模块里实现：
+             * 开关1（C27）/ 开关2（C26）、环岛冷却、直道左移、慢打舵机判定。 */
+            {
+                boost_frame_t boost = boost_update(enc_distance, speed_mode,
+                                                   ring_current_state(), cross_path_state,
+                                                   cross_seen, (uint8_t)(reverse_state() >= 2),
+                                                   (uint8_t)control_paired, (uint8_t)control_single,
+                                                   mid_line, left_line, right_line);
+                steer_gain = boost.steer_gain;
+                in_zone_active = boost.slow_steer;
+                boost_sw1 = boost.sw1;
+                boost_sw2 = boost.sw2;
+            }
+
             // 使用一段有效中线的加权偏差；全段无效时进入自救。
             float mid_err;
             /* State 4 also steers from its valid island-based midline. */
@@ -365,10 +418,18 @@ int main(void)
                 steer_lost_frames = 0;
                 steer_last_error = mid_err;
                 //舵机根据误差乘以系数打角
-                float tmp_duty = servo_motor_duty_middle - mid_err * 0.4f * SERVO_DIR;
+                float tmp_duty = servo_motor_duty_middle - mid_err * steer_gain * SERVO_DIR;
                 // 限幅
                 tmp_duty = MAX(tmp_duty,MIN(SERVO_MOTOR_L_MAX,SERVO_MOTOR_R_MAX));
                 tmp_duty = MIN(tmp_duty,MAX(SERVO_MOTOR_L_MAX,SERVO_MOTOR_R_MAX));
+                /* 舵机指令变化率限制：只在加速/减速段生效 */
+                if (in_zone_active)
+                {
+                    float step = tmp_duty - servo_out_last;
+                    if (step > SERVO_SLEW_MAX) tmp_duty = servo_out_last + SERVO_SLEW_MAX;
+                    else if (step < -SERVO_SLEW_MAX) tmp_duty = servo_out_last - SERVO_SLEW_MAX;
+                }
+                servo_out_last = tmp_duty;
                 pwm_set_duty(SERVO_MOTOR_PWM, SERVO_MOTOR_DUTY(tmp_duty));
                 steer_last_duty = tmp_duty;
                 steer_have_last = 1;

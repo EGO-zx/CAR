@@ -37,6 +37,7 @@
 #include "isr.h"
 #include "main.h"
 #include "reverse_process.h"
+#include "boost_process.h"
 
 int16 encoder_data_1 = 0;
 int16 encoder_data_2 = 0;
@@ -103,6 +104,17 @@ void PIT_IRQHandler(void)
             }
             pwm_set_duty(MOTOR1_PWM, reverse_pwm);
             pwm_set_duty(MOTOR2_PWM, reverse_pwm);
+        }
+        else if (boost_brake_enable)
+        {
+            /* 加速区间结束后的减速段：反向制动，把速度压回目标值 */
+            speed_real = (encoder_data_1 + encoder_data_2) * 0.5f;
+            gpio_set_level(MOTOR1_DIR,
+                MOTOR1_FORWARD_DIR_LEVEL == GPIO_HIGH ? GPIO_LOW : GPIO_HIGH);
+            gpio_set_level(MOTOR2_DIR,
+                MOTOR2_FORWARD_DIR_LEVEL == GPIO_HIGH ? GPIO_LOW : GPIO_HIGH);
+            pwm_set_duty(MOTOR1_PWM, boost_brake_pwm);
+            pwm_set_duty(MOTOR2_PWM, boost_brake_pwm);
         }
         else if (target <= 0.0f)
         {

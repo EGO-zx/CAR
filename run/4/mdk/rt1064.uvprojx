@@ -439,6 +439,11 @@
               <FileType>1</FileType>
               <FilePath>..\user\src\pid.c</FilePath>
             </File>
+            <File>
+              <FileName>boost_process.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\user\src\boost_process.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
